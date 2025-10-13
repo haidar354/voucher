@@ -1,0 +1,246 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// Enum Definitions
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN
+  KASIR
+}
+
+enum TipeRule {
+  MINIMAL_BELANJA      // Minimal belanja dapat voucher
+  KELIPATAN            // Kelipatan nilai belanja
+  EVENT_KHUSUS         // Event khusus dengan bonus
+  BRAND_SPECIFIC       // Brand tertentu (Seiko, Casio, dll)
+  HIGH_VALUE_PURCHASE  // Pembelian nominal tinggi
+  NEW_COLLECTION       // Koleksi baru
+  MEMBER_EXCLUSIVE     // Member VIP only
+  TIME_BASED           // Waktu tertentu (midnight sale, dll)
+  BUNDLING             // Beli jam + aksesoris
+}
+
+enum StatusVoucher {
+  AKTIF
+  TERPAKAI
+  KADALUARSA
+  DIBATALKAN
+}
+
+enum AksiLog {
+  DIBUAT
+  DIGUNAKAN
+  KADALUARSA
+  DIBATALKAN
+}
+
+// Model User (Pelanggan)
+model User {
+  id             Int                 @id @default(autoincrement())
+  nama           String
+  email          String?             @unique
+  noHp           String              @unique
+  alamat         String?
+  memberTier     String?             // VIP, GOLD, SILVER, BRONZE, null = non-member
+  tanggalDaftar  DateTime            @default(now())
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  
+  // Relations
+  transaksi      TransaksiBelanja[]
+  voucher        Voucher[]
+
+  @@index([noHp])
+  @@index([email])
+  @@index([memberTier])
+  @@map("users")
+}
+
+// Model Admin
+model Admin {
+  id           Int                 @id @default(autoincrement())
+  username     String              @unique
+  password     String              // hashed dengan bcrypt
+  namaLengkap  String
+  role         AdminRole           @default(ADMIN)
+  aktif        Boolean             @default(true)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  
+  // Relations
+  transaksi    TransaksiBelanja[]
+  logVoucher   LogVoucher[]
+
+  @@index([username])
+  @@map("admins")
+}
+
+// Model Event
+model Event {
+  id                  Int            @id @default(autoincrement())
+  namaEvent           String
+  deskripsi           String?
+  tanggalMulai        DateTime
+  tanggalSelesai      DateTime
+  bonusVoucherKhusus  Int            @default(0)
+  aktif               Boolean        @default(true)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  
+  // Relations
+  ruleVoucher         RuleVoucher[]
+
+  @@index([aktif])
+  @@index([tanggalMulai, tanggalSelesai])
+  @@map("events")
+}
+
+// Model RuleVoucher
+model RuleVoucher {
+  id               Int         @id @default(autoincrement())
+  namaRule         String
+  tipeRule         TipeRule
+  nilaiMinimal     Decimal     @db.Decimal(15, 2)
+  jumlahVoucher    Int
+  
+  // Field untuk tipe KELIPATAN
+  kelipatanDari    Decimal?    @db.Decimal(15, 2)
+  
+  // Field untuk tipe BRAND_SPECIFIC
+  brandName        String?     // Nama brand: Seiko, Casio, Citizen, dll
+  
+  // Field untuk tipe HIGH_VALUE_PURCHASE
+  voucherValue     Decimal?    @db.Decimal(15, 2)  // Nilai voucher yang didapat
+  
+  // Field untuk tipe NEW_COLLECTION
+  collectionName   String?     // Nama koleksi: "2025 Spring Collection"
+  collectionYear   Int?        // Tahun koleksi
+  
+  // Field untuk tipe MEMBER_EXCLUSIVE
+  memberTier       String?     // VIP, GOLD, SILVER, BRONZE
+  
+  // Field untuk tipe TIME_BASED
+  jamMulai         String?     // Format: "22:00" untuk midnight sale
+  jamSelesai       String?     // Format: "02:00"
+  hariKhusus       String?     // SENIN, SELASA, WEEKEND, dll
+  
+  // Field untuk tipe BUNDLING
+  requiredItems    String?     // JSON array: ["jam", "tali_kulit", "kotak"]
+  minItems         Int?        // Minimal berapa item untuk bundling
+  
+  masaBerlakuHari  Int         @default(30)
+  prioritas        Int         @default(1)         // TIDAK DIGUNAKAN (hanya 1 rule aktif)
+  akumulasiRule    Boolean     @default(false)     // TIDAK DIGUNAKAN (hanya 1 rule aktif)
+  eventId          Int?
+  aktif            Boolean     @default(true)      // HANYA 1 RULE BOLEH AKTIF
+  tanggalMulai     DateTime
+  tanggalSelesai   DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  
+  // Relations
+  event            Event?      @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  voucher          Voucher[]
+
+  @@index([aktif])
+  @@index([tipeRule])
+  @@index([brandName])
+  @@index([memberTier])
+  @@index([tanggalMulai, tanggalSelesai])
+  @@map("rule_vouchers")
+}
+
+// Model TransaksiBelanja
+model TransaksiBelanja {
+  id                Int         @id @default(autoincrement())
+  userId            Int
+  kodeStruk         String      @unique
+  totalBelanja      Decimal     @db.Decimal(15, 2)
+  tanggalTransaksi  DateTime    @default(now())
+  adminId           Int
+  catatan           String?
+  
+  // Field tambahan untuk rule baru
+  brandName         String?     // Brand jam yang dibeli: Seiko, Casio, dll
+  collectionName    String?     // Nama koleksi: "2025 Spring Collection"
+  collectionYear    Int?        // Tahun koleksi
+  items             String?     // JSON array item yang dibeli: ["jam", "tali_kulit"]
+  
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  
+  // Relations
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  admin             Admin       @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  voucher           Voucher[]   @relation("VoucherDibuat")
+  voucherDigunakan  Voucher[]   @relation("VoucherDigunakan")
+
+  @@index([userId])
+  @@index([adminId])
+  @@index([kodeStruk])
+  @@index([tanggalTransaksi])
+  @@index([brandName])
+  @@index([collectionName])
+  @@map("transaksi_belanja")
+}
+
+// Model Voucher
+model Voucher {
+  id                     Int                 @id @default(autoincrement())
+  userId                 Int
+  transaksiId            Int
+  ruleId                 Int
+  kodeVoucher            String              @unique
+  nomorUndian            String?
+  tanggalDibuat          DateTime            @default(now())
+  tanggalKadaluarsa      DateTime
+  status                 StatusVoucher       @default(AKTIF)
+  tanggalDigunakan       DateTime?
+  transaksiDigunakanId   Int?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  
+  // Relations
+  user                   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transaksi              TransaksiBelanja    @relation("VoucherDibuat", fields: [transaksiId], references: [id], onDelete: Cascade)
+  rule                   RuleVoucher         @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  transaksiDigunakan     TransaksiBelanja?   @relation("VoucherDigunakan", fields: [transaksiDigunakanId], references: [id], onDelete: SetNull)
+  logVoucher             LogVoucher[]
+
+  @@index([userId])
+  @@index([transaksiId])
+  @@index([ruleId])
+  @@index([kodeVoucher])
+  @@index([status])
+  @@index([tanggalKadaluarsa])
+  @@map("vouchers")
+}
+
+// Model LogVoucher
+model LogVoucher {
+  id            Int         @id @default(autoincrement())
+  voucherId     Int
+  aksi          AksiLog
+  tanggalAksi   DateTime    @default(now())
+  adminId       Int?
+  keterangan    String?
+  createdAt     DateTime    @default(now())
+  
+  // Relations
+  voucher       Voucher     @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  admin         Admin?      @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([voucherId])
+  @@index([aksi])
+  @@index([tanggalAksi])
+  @@map("log_vouchers")
+}

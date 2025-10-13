@@ -1,0 +1,772 @@
+================================================================================
+                    TUTORIAL - ALUR KODE API ENDPOINT
+                        GET /api/users
+================================================================================
+
+📖 DAFTAR ISI:
+1. Overview
+2. Alur Request-Response
+3. File-file yang Terlibat
+4. Step-by-Step Execution
+5. Contoh Request & Response
+6. Error Handling
+7. Tips Debugging
+
+================================================================================
+1. OVERVIEW
+================================================================================
+
+Endpoint: GET /api/users
+Fungsi: Mengambil daftar semua user (pelanggan) dengan pagination
+Auth: Memerlukan JWT token (Admin/Kasir)
+Method: GET
+Response: JSON dengan list users + pagination info
+
+================================================================================
+2. ALUR REQUEST-RESPONSE (High Level)
+================================================================================
+
+Client (Postman/Frontend)
+    |
+    | 1. HTTP GET Request
+    |    Header: Authorization: Bearer <JWT_TOKEN>
+    |    Query: ?page=1&limit=10
+    v
+Next.js Server (Port 3000)
+    |
+    | 2. Routing
+    v
+app/api/users/route.ts (GET function)
+    |
+    | 3. Authentication Middleware
+    v
+middleware/auth.ts (authenticate function)
+    |
+    | 4. Authorization Middleware
+    v
+middleware/authorize.ts (authorize function)
+    |
+    | 5. Validation
+    v
+lib/validations.ts (paginationSchema)
+    |
+    | 6. Database Query
+    v
+lib/prisma.ts (Prisma Client)
+    |
+    | 7. Database (MySQL)
+    v
+Database: voucher_db.users table
+    |
+    | 8. Format Response
+    v
+lib/response.ts (successResponse)
+    |
+    | 9. Send JSON Response
+    v
+Client (Postman/Frontend)
+
+================================================================================
+3. FILE-FILE YANG TERLIBAT
+================================================================================
+
+📁 app/api/users/route.ts
+   └─ Main endpoint handler (GET function)
+
+📁 middleware/auth.ts
+   └─ Authentication: Verify JWT token
+
+📁 middleware/authorize.ts
+   └─ Authorization: Check user role
+
+📁 lib/validations.ts
+   └─ Zod schemas untuk validasi input
+
+📁 lib/prisma.ts
+   └─ Prisma Client instance
+
+📁 lib/response.ts
+   └─ Helper functions untuk format response
+
+📁 prisma/schema.prisma
+   └─ Database schema definition
+
+📁 types/index.ts
+   └─ TypeScript type definitions
+
+================================================================================
+4. STEP-BY-STEP EXECUTION
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────
+STEP 1: Client Mengirim Request
+────────────────────────────────────────────────────────────────────────────
+
+Request:
+GET http://localhost:3000/api/users?page=1&limit=10
+Headers:
+  Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+  Content-Type: application/json
+
+Query Parameters:
+  - page: 1 (halaman ke berapa)
+  - limit: 10 (berapa data per halaman)
+
+────────────────────────────────────────────────────────────────────────────
+STEP 2: Next.js Routing
+────────────────────────────────────────────────────────────────────────────
+
+File: next.config.js & Next.js internal routing
+
+Next.js menerima request dan mencari route handler yang sesuai:
+- URL: /api/users
+- Method: GET
+- Match: app/api/users/route.ts → GET function
+
+────────────────────────────────────────────────────────────────────────────
+STEP 3: Route Handler Dipanggil
+────────────────────────────────────────────────────────────────────────────
+
+File: app/api/users/route.ts
+Function: GET(request: NextRequest)
+
+Code Flow:
+```typescript
+export async function GET(request: NextRequest) {
+  try {
+    // Step 3.1: Authentication
+    const authResult = await authenticate(request);
+    
+    // Step 3.2: Authorization
+    const authzResult = authorize(authResult.admin, [
+      AdminRole.SUPER_ADMIN,
+      AdminRole.ADMIN,
+      AdminRole.KASIR,
+    ]);
+    
+    // Step 3.3: Parse & Validate Query Params
+    const { searchParams } = new URL(request.url);
+    const query = {
+      page: searchParams.get('page') || '1',
+      limit: searchParams.get('limit') || '10',
+    };
+    const validatedQuery = paginationSchema.parse(query);
+    
+    // Step 3.4: Database Query
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        skip: (validatedQuery.page - 1) * validatedQuery.limit,
+        take: validatedQuery.limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.user.count(),
+    ]);
+    
+    // Step 3.5: Format Response
+    return successResponse(
+      { users },
+      'Users berhasil diambil',
+      200,
+      {
+        page: validatedQuery.page,
+        limit: validatedQuery.limit,
+        total,
+        totalPages: Math.ceil(total / validatedQuery.limit),
+      }
+    );
+  } catch (error) {
+    return handleError(error);
+  }
+}
+```
+
+────────────────────────────────────────────────────────────────────────────
+STEP 4: Authentication (middleware/auth.ts)
+────────────────────────────────────────────────────────────────────────────
+
+File: middleware/auth.ts
+Function: authenticate(request: NextRequest)
+
+Code Flow:
+```typescript
+export async function authenticate(request: NextRequest) {
+  // 4.1: Extract token from Authorization header
+  const authHeader = request.headers.get('authorization');
+  // authHeader = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return {
+      authenticated: false,
+      response: errorResponse('Token tidak ditemukan', 401),
+    };
+  }
+  
+  // 4.2: Extract token
+  const token = authHeader.split(' ')[1];
+  // token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  
+  // 4.3: Verify JWT token
+  const decoded = jwt.verify(token, process.env.JWT_SECRET!) as JWTPayload;
+  // decoded = { adminId: 1, username: "admin", role: "SUPER_ADMIN" }
+  
+  // 4.4: Check if admin exists in database
+  const admin = await prisma.admin.findUnique({
+    where: { id: decoded.adminId },
+  });
+  
+  if (!admin || !admin.aktif) {
+    return {
+      authenticated: false,
+      response: errorResponse('Admin tidak valid', 401),
+    };
+  }
+  
+  // 4.5: Return success
+  return {
+    authenticated: true,
+    admin: decoded,
+  };
+}
+```
+
+Result:
+✅ authenticated: true
+✅ admin: { adminId: 1, username: "admin", role: "SUPER_ADMIN" }
+
+────────────────────────────────────────────────────────────────────────────
+STEP 5: Authorization (middleware/authorize.ts)
+────────────────────────────────────────────────────────────────────────────
+
+File: middleware/authorize.ts
+Function: authorize(admin: JWTPayload, allowedRoles: AdminRole[])
+
+Code Flow:
+```typescript
+export function authorize(
+  admin: JWTPayload,
+  allowedRoles: AdminRole[]
+) {
+  // 5.1: Check if admin role is in allowed roles
+  if (!allowedRoles.includes(admin.role)) {
+    return {
+      authorized: false,
+      response: errorResponse('Akses ditolak', 403),
+    };
+  }
+  
+  // 5.2: Return success
+  return {
+    authorized: true,
+  };
+}
+```
+
+Input:
+- admin.role = "SUPER_ADMIN"
+- allowedRoles = ["SUPER_ADMIN", "ADMIN", "KASIR"]
+
+Check:
+"SUPER_ADMIN" in ["SUPER_ADMIN", "ADMIN", "KASIR"] ✅
+
+Result:
+✅ authorized: true
+
+────────────────────────────────────────────────────────────────────────────
+STEP 6: Validation (lib/validations.ts)
+────────────────────────────────────────────────────────────────────────────
+
+File: lib/validations.ts
+Schema: paginationSchema
+
+Code:
+```typescript
+export const paginationSchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(10),
+});
+```
+
+Input:
+- page: "1" (string dari query param)
+- limit: "10" (string dari query param)
+
+Validation Process:
+1. z.coerce.number() → Convert string to number
+   - "1" → 1
+   - "10" → 10
+
+2. .int() → Check if integer
+   - 1 ✅
+   - 10 ✅
+
+3. .positive() → Check if positive (> 0)
+   - 1 > 0 ✅
+   - 10 > 0 ✅
+
+4. .max(100) → Check if <= 100 (only for limit)
+   - 10 <= 100 ✅
+
+Result:
+✅ validatedQuery = { page: 1, limit: 10 }
+
+────────────────────────────────────────────────────────────────────────────
+STEP 7: Database Query (lib/prisma.ts)
+────────────────────────────────────────────────────────────────────────────
+
+File: lib/prisma.ts
+Client: Prisma Client
+
+Code:
+```typescript
+const [users, total] = await Promise.all([
+  // Query 1: Get users with pagination
+  prisma.user.findMany({
+    skip: (validatedQuery.page - 1) * validatedQuery.limit,
+    take: validatedQuery.limit,
+    orderBy: { createdAt: 'desc' },
+  }),
+  
+  // Query 2: Count total users
+  prisma.user.count(),
+]);
+```
+
+Calculation:
+- page = 1
+- limit = 10
+- skip = (1 - 1) * 10 = 0
+- take = 10
+
+SQL Query yang Dihasilkan:
+```sql
+-- Query 1: Get users
+SELECT 
+  id, nama, email, noHp, alamat, memberTier, 
+  tanggalDaftar, createdAt, updatedAt
+FROM users
+ORDER BY createdAt DESC
+LIMIT 10 OFFSET 0;
+
+-- Query 2: Count total
+SELECT COUNT(*) FROM users;
+```
+
+Result:
+users = [
+  {
+    id: 1,
+    nama: "Budi Santoso",
+    email: "budi@example.com",
+    noHp: "081234567890",
+    alamat: "Jakarta",
+    memberTier: "VIP",
+    tanggalDaftar: "2025-01-01T00:00:00Z",
+    createdAt: "2025-01-01T00:00:00Z",
+    updatedAt: "2025-01-01T00:00:00Z"
+  },
+  {
+    id: 2,
+    nama: "Ani Wijaya",
+    email: "ani@example.com",
+    noHp: "081234567891",
+    alamat: "Bandung",
+    memberTier: "GOLD",
+    tanggalDaftar: "2025-01-02T00:00:00Z",
+    createdAt: "2025-01-02T00:00:00Z",
+    updatedAt: "2025-01-02T00:00:00Z"
+  },
+  // ... 8 more users
+]
+
+total = 25
+
+────────────────────────────────────────────────────────────────────────────
+STEP 8: Format Response (lib/response.ts)
+────────────────────────────────────────────────────────────────────────────
+
+File: lib/response.ts
+Function: successResponse()
+
+Code:
+```typescript
+export function successResponse<T>(
+  data: T,
+  message: string = 'Success',
+  status: number = 200,
+  pagination?: PaginationMeta
+): NextResponse {
+  const response: ApiResponse<T> = {
+    success: true,
+    message,
+    data,
+  };
+
+  if (pagination) {
+    return NextResponse.json(
+      { ...response, pagination },
+      { status }
+    );
+  }
+
+  return NextResponse.json(response, { status });
+}
+```
+
+Input:
+- data: { users: [...] }
+- message: "Users berhasil diambil"
+- status: 200
+- pagination: { page: 1, limit: 10, total: 25, totalPages: 3 }
+
+Output:
+```json
+{
+  "success": true,
+  "message": "Users berhasil diambil",
+  "data": {
+    "users": [
+      {
+        "id": 1,
+        "nama": "Budi Santoso",
+        "email": "budi@example.com",
+        "noHp": "081234567890",
+        "alamat": "Jakarta",
+        "memberTier": "VIP",
+        "tanggalDaftar": "2025-01-01T00:00:00.000Z",
+        "createdAt": "2025-01-01T00:00:00.000Z",
+        "updatedAt": "2025-01-01T00:00:00.000Z"
+      },
+      // ... 9 more users
+    ]
+  },
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 25,
+    "totalPages": 3
+  }
+}
+```
+
+────────────────────────────────────────────────────────────────────────────
+STEP 9: Send Response to Client
+────────────────────────────────────────────────────────────────────────────
+
+Next.js mengirim response ke client:
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 1234
+
+{
+  "success": true,
+  "message": "Users berhasil diambil",
+  "data": { ... },
+  "pagination": { ... }
+}
+
+Client (Postman/Frontend) menerima response dan menampilkan data.
+
+================================================================================
+5. CONTOH REQUEST & RESPONSE
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────
+CONTOH 1: Request Berhasil (200 OK)
+────────────────────────────────────────────────────────────────────────────
+
+Request:
+GET http://localhost:3000/api/users?page=1&limit=10
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+Response:
+{
+  "success": true,
+  "message": "Users berhasil diambil",
+  "data": {
+    "users": [
+      {
+        "id": 1,
+        "nama": "Budi Santoso",
+        "email": "budi@example.com",
+        "noHp": "081234567890",
+        "alamat": "Jakarta",
+        "memberTier": "VIP",
+        "tanggalDaftar": "2025-01-01T00:00:00.000Z",
+        "createdAt": "2025-01-01T00:00:00.000Z",
+        "updatedAt": "2025-01-01T00:00:00.000Z"
+      }
+    ]
+  },
+  "pagination": {
+    "page": 1,
+    "limit": 10,
+    "total": 25,
+    "totalPages": 3
+  }
+}
+
+────────────────────────────────────────────────────────────────────────────
+CONTOH 2: Request Tanpa Token (401 Unauthorized)
+────────────────────────────────────────────────────────────────────────────
+
+Request:
+GET http://localhost:3000/api/users?page=1&limit=10
+(Tanpa Authorization header)
+
+Response:
+{
+  "success": false,
+  "message": "Token tidak ditemukan",
+  "error": "Unauthorized"
+}
+
+────────────────────────────────────────────────────────────────────────────
+CONTOH 3: Request dengan Token Invalid (401 Unauthorized)
+────────────────────────────────────────────────────────────────────────────
+
+Request:
+GET http://localhost:3000/api/users?page=1&limit=10
+Authorization: Bearer invalid_token_123
+
+Response:
+{
+  "success": false,
+  "message": "Token tidak valid",
+  "error": "JsonWebTokenError: jwt malformed"
+}
+
+────────────────────────────────────────────────────────────────────────────
+CONTOH 4: Request dengan Role Tidak Sesuai (403 Forbidden)
+────────────────────────────────────────────────────────────────────────────
+
+Jika endpoint hanya allow SUPER_ADMIN, tapi user adalah KASIR:
+
+Request:
+GET http://localhost:3000/api/users?page=1&limit=10
+Authorization: Bearer <token_kasir>
+
+Response:
+{
+  "success": false,
+  "message": "Akses ditolak",
+  "error": "Forbidden"
+}
+
+────────────────────────────────────────────────────────────────────────────
+CONTOH 5: Request dengan Query Param Invalid (400 Bad Request)
+────────────────────────────────────────────────────────────────────────────
+
+Request:
+GET http://localhost:3000/api/users?page=-1&limit=200
+Authorization: Bearer <valid_token>
+
+Response:
+{
+  "success": false,
+  "message": "Validation error",
+  "error": "page must be positive, limit must be <= 100"
+}
+
+================================================================================
+6. ERROR HANDLING
+================================================================================
+
+File: middleware/errorHandler.ts
+Function: handleError(error: any)
+
+Error Types:
+
+1. ZodError (Validation Error)
+   - Status: 400 Bad Request
+   - Message: Detail validasi yang gagal
+
+2. JsonWebTokenError (JWT Error)
+   - Status: 401 Unauthorized
+   - Message: "Token tidak valid"
+
+3. PrismaClientKnownRequestError (Database Error)
+   - P2002: Unique constraint violation → 409 Conflict
+   - P2025: Record not found → 404 Not Found
+   - Others: 500 Internal Server Error
+
+4. Generic Error
+   - Status: 500 Internal Server Error
+   - Message: Error message
+
+Code Flow:
+```typescript
+export function handleError(error: any): NextResponse {
+  console.error('Error:', error);
+
+  // Zod validation error
+  if (error instanceof z.ZodError) {
+    return errorResponse(
+      'Validation error',
+      400,
+      error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ')
+    );
+  }
+
+  // JWT error
+  if (error.name === 'JsonWebTokenError') {
+    return errorResponse('Token tidak valid', 401, error.message);
+  }
+
+  // Prisma error
+  if (error.code === 'P2002') {
+    return errorResponse('Data sudah ada', 409);
+  }
+
+  // Generic error
+  return errorResponse(
+    'Internal server error',
+    500,
+    error.message
+  );
+}
+```
+
+================================================================================
+7. TIPS DEBUGGING
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────
+TIP 1: Console Log di Setiap Step
+────────────────────────────────────────────────────────────────────────────
+
+Tambahkan console.log di setiap step untuk tracking:
+
+```typescript
+export async function GET(request: NextRequest) {
+  console.log('📥 [GET /api/users] Request received');
+  
+  const authResult = await authenticate(request);
+  console.log('🔐 Auth result:', authResult.authenticated);
+  
+  const validatedQuery = paginationSchema.parse(query);
+  console.log('✅ Validated query:', validatedQuery);
+  
+  const users = await prisma.user.findMany({ ... });
+  console.log('📊 Users found:', users.length);
+  
+  return successResponse({ users }, 'Success');
+}
+```
+
+────────────────────────────────────────────────────────────────────────────
+TIP 2: Gunakan Prisma Studio untuk Cek Database
+────────────────────────────────────────────────────────────────────────────
+
+```bash
+npm run db:studio
+```
+
+Buka: http://localhost:5555
+Cek data di table users secara visual.
+
+────────────────────────────────────────────────────────────────────────────
+TIP 3: Test dengan Postman
+────────────────────────────────────────────────────────────────────────────
+
+1. Login dulu untuk dapat token:
+   POST /api/auth/login
+   Body: { "username": "admin", "password": "admin123" }
+
+2. Copy token dari response
+
+3. Test GET /api/users:
+   GET /api/users?page=1&limit=10
+   Header: Authorization: Bearer <token>
+
+────────────────────────────────────────────────────────────────────────────
+TIP 4: Cek Server Logs
+────────────────────────────────────────────────────────────────────────────
+
+Terminal tempat `npm run dev` berjalan akan menampilkan:
+- Request yang masuk
+- Query SQL yang dijalankan (jika prisma logging enabled)
+- Error yang terjadi
+
+────────────────────────────────────────────────────────────────────────────
+TIP 5: Enable Prisma Query Logging
+────────────────────────────────────────────────────────────────────────────
+
+File: lib/prisma.ts
+
+```typescript
+const prisma = new PrismaClient({
+  log: ['query', 'info', 'warn', 'error'], // Enable logging
+});
+```
+
+Akan menampilkan SQL query di console:
+```
+prisma:query SELECT * FROM users LIMIT 10 OFFSET 0
+```
+
+================================================================================
+8. SUMMARY - ALUR LENGKAP
+================================================================================
+
+1. Client → HTTP GET Request dengan JWT token
+2. Next.js → Route ke app/api/users/route.ts
+3. authenticate() → Verify JWT token
+4. authorize() → Check admin role
+5. paginationSchema.parse() → Validate query params
+6. prisma.user.findMany() → Query database
+7. successResponse() → Format response JSON
+8. Next.js → Send response ke client
+9. Client → Terima & tampilkan data
+
+Total Execution Time: ~50-200ms (tergantung database)
+
+================================================================================
+9. FILE STRUCTURE
+================================================================================
+
+c:/coba4/
+├── app/
+│   └── api/
+│       └── users/
+│           └── route.ts          ← Main endpoint handler
+├── middleware/
+│   ├── auth.ts                   ← Authentication
+│   ├── authorize.ts              ← Authorization
+│   └── errorHandler.ts           ← Error handling
+├── lib/
+│   ├── prisma.ts                 ← Prisma client
+│   ├── response.ts               ← Response helpers
+│   └── validations.ts            ← Zod schemas
+├── types/
+│   └── index.ts                  ← TypeScript types
+└── prisma/
+    └── schema.prisma             ← Database schema
+
+================================================================================
+10. KESIMPULAN
+================================================================================
+
+Alur kode GET /api/users:
+✅ Simple & clean
+✅ Modular (setiap fungsi punya tanggung jawab sendiri)
+✅ Secure (authentication & authorization)
+✅ Type-safe (TypeScript + Zod)
+✅ Error handling yang baik
+
+Prinsip yang digunakan:
+- Separation of Concerns
+- Single Responsibility Principle
+- DRY (Don't Repeat Yourself)
+- Error handling di setiap layer
+
+================================================================================
+END OF TUTORIAL
+================================================================================
+
+Untuk endpoint lain (POST, PUT, DELETE), alurnya mirip dengan tambahan:
+- Validation request body
+- Database mutation (create/update/delete)
+- Business logic (seperti generate voucher)
+
+Semoga tutorial ini membantu! 🚀

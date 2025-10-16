@@ -1,12 +1,24 @@
 import { NextResponse } from 'next/server';
 import { ApiResponse, PaginatedResponse, PaginationMeta } from '@/types';
 
+/**
+ * Apply CORS headers to response
+ */
+function applyCorsHeaders(response: NextResponse): NextResponse {
+  response.headers.set('Access-Control-Allow-Origin', 'http://localhost:8080');
+  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  response.headers.set('Access-Control-Allow-Credentials', 'true');
+  response.headers.set('Access-Control-Max-Age', '86400'); // 24 hours
+  return response;
+}
+
 export function successResponse<T>(
   data: T,
   message: string = 'Success',
   status: number = 200
 ): NextResponse<ApiResponse<T>> {
-  return NextResponse.json(
+  const response = NextResponse.json(
     {
       success: true,
       message,
@@ -14,6 +26,7 @@ export function successResponse<T>(
     },
     { status }
   );
+  return applyCorsHeaders(response);
 }
 
 export function errorResponse(
@@ -21,7 +34,7 @@ export function errorResponse(
   status: number = 400,
   error?: string
 ): NextResponse<ApiResponse> {
-  return NextResponse.json(
+  const response = NextResponse.json(
     {
       success: false,
       message,
@@ -29,6 +42,7 @@ export function errorResponse(
     },
     { status }
   );
+  return applyCorsHeaders(response);
 }
 
 export function paginationResponse<T>(
@@ -37,7 +51,7 @@ export function paginationResponse<T>(
   message: string = 'Success',
   status: number = 200
 ): NextResponse<PaginatedResponse<T>> {
-  return NextResponse.json(
+  const response = NextResponse.json(
     {
       success: true,
       message,
@@ -46,6 +60,7 @@ export function paginationResponse<T>(
     },
     { status }
   );
+  return applyCorsHeaders(response);
 }
 
 export function unauthorizedResponse(

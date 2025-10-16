@@ -1,0 +1,138 @@
+// Schema tambahan untuk sistem hadiah
+// Tambahkan ke schema.prisma yang sudah ada
+
+// Enums untuk sistem hadiah
+enum StatusUndian {
+  AKTIF
+  SELESAI
+  DIBATALKAN
+}
+
+enum StatusPemenang {
+  BELUM_MEMILIH    // Pemenang belum memilih hadiah
+  SUDAH_MEMILIH    // Pemenang sudah memilih hadiah tapi belum diambil
+  SUDAH_DIAMBIL    // Hadiah sudah diambil
+  DIBATALKAN       // Pemenang dibatalkan
+}
+
+// Model KategoriHadiah
+model KategoriHadiah {
+  id          Int      @id @default(autoincrement())
+  namaKategori String   @unique
+  deskripsi   String?
+  aktif       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  hadiah      Hadiah[]
+  
+  @@map("kategori_hadiah")
+}
+
+// Model Hadiah
+model Hadiah {
+  id              Int            @id @default(autoincrement())
+  namaHadiah      String
+  deskripsi       String?
+  kategoriId      Int
+  nilaiHadiah     Decimal        @db.Decimal(15, 2)
+  stok            Int            @default(0)
+  stokTerpakai    Int            @default(0)
+  gambar          String?        // URL gambar hadiah
+  aktif           Boolean        @default(true)
+  tanggalMulai    DateTime?
+  tanggalSelesai  DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  
+  // Relations
+  kategori        KategoriHadiah @relation(fields: [kategoriId], references: [id])
+  pemenangHadiah  PemenangHadiah[]
+  
+  @@index([kategoriId])
+  @@index([aktif])
+  @@map("hadiah")
+}
+
+// Model Undian
+model Undian {
+  id              Int            @id @default(autoincrement())
+  namaUndian      String
+  deskripsi       String?
+  tanggalMulai    DateTime
+  tanggalSelesai  DateTime
+  totalHadiah     Int            @default(0)
+  hadiahTerbagi   Int            @default(0)
+  status          StatusUndian   @default(AKTIF)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  
+  // Relations
+  pemenangHadiah  PemenangHadiah[]
+  
+  @@index([status])
+  @@index([tanggalMulai, tanggalSelesai])
+  @@map("undian")
+}
+
+// Model PemenangHadiah
+model PemenangHadiah {
+  id              Int            @id @default(autoincrement())
+  undianId        Int
+  hadiahId        Int?           // NULL sampai pemenang memilih hadiah
+  userId          Int
+  voucherId       Int?           // Optional: jika menang dari voucher
+  nomorUndian     String?        // Nomor undian yang menang
+  tanggalMenang   DateTime       @default(now())
+  status          StatusPemenang @default(BELUM_MEMILIH) // Status baru
+  tanggalPilih    DateTime?      // Kapan pemenang memilih hadiah
+  tanggalAmbil    DateTime?      // Kapan hadiah diambil
+  adminAmbil      Int?           // Admin yang menyerahkan hadiah
+  catatan         String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  
+  // Relations
+  undian          Undian         @relation(fields: [undianId], references: [id])
+  hadiah          Hadiah?        @relation(fields: [hadiahId], references: [id]) // Optional
+  user            User           @relation(fields: [userId], references: [id])
+  voucher         Voucher?       @relation(fields: [voucherId], references: [id])
+  admin           Admin?         @relation(fields: [adminAmbil], references: [id])
+  
+  @@index([undianId])
+  @@index([hadiahId])
+  @@index([userId])
+  @@index([status])
+  @@map("pemenang_hadiah")
+}
+
+// Update model User untuk relasi pemenang hadiah
+// model User {
+//   // ... existing fields
+//   
+//   // Relations
+//   pemenangHadiah  PemenangHadiah[] // NEW: Relasi ke pemenang hadiah
+//   
+//   // ... rest of model
+// }
+
+// Update model Voucher untuk relasi pemenang hadiah
+// model Voucher {
+//   // ... existing fields
+//   
+//   // Relations
+//   pemenangHadiah  PemenangHadiah[] // NEW: Relasi ke pemenang hadiah
+//   
+//   // ... rest of model
+// }
+
+// Update model Admin untuk relasi pemenang hadiah
+// model Admin {
+//   // ... existing fields
+//   
+//   // Relations
+//   pemenangHadiah  PemenangHadiah[] // NEW: Relasi ke pemenang hadiah
+//   
+//   // ... rest of model
+// }
